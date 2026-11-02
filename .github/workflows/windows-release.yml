@@ -1,0 +1,114 @@
+name: Windows build and installer
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'source/**'
+      - '.github/workflows/windows-release.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'source/**'
+      - '.github/workflows/windows-release.yml'
+  workflow_dispatch:
+    inputs:
+      build_windows:
+        description: 'Build and package the Windows installer after validation has passed'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install SQLite development library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Restore dependencies
+        working-directory: source
+        run: flutter pub get
+      - name: Analyze source
+        working-directory: source
+        run: flutter analyze
+      - name: Run all tests
+        working-directory: source
+        run: flutter test --reporter expanded
+
+  windows:
+    needs: validate
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_windows == true)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build, analyze, test and package Windows
+        shell: pwsh
+        working-directory: source
+        run: ./tool/build_release.ps1
+      - name: Smoke test Windows installer
+        shell: pwsh
+        run: |
+          $versionLine = Get-Content 'source/pubspec.yaml' | Where-Object { $_.StartsWith('version:') } | Select-Object -First 1
+          if (-not $versionLine) { throw 'Could not read app version for installer smoke test.' }
+          $version = ($versionLine -split ':', 2)[1].Trim().Split('+')[0]
+          $installer = Join-Path $env:GITHUB_WORKSPACE "builds\ABDULMALIK-ERP-Setup-$version.exe"
+          if (-not (Test-Path $installer)) { throw "Installer not found: $installer" }
+
+          $installDir = Join-Path $env:RUNNER_TEMP 'ABDULMALIK-ERP-smoke'
+          if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+          $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$installDir`"")
+          $install = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Silent installation failed with exit code $($install.ExitCode)." }
+
+          $exe = Join-Path $installDir 'abdulmalik_erp.exe'
+          $uninstaller = Join-Path $installDir 'unins000.exe'
+          if (-not (Test-Path $exe)) { throw 'Installed application executable is missing.' }
+          if (-not (Test-Path $uninstaller)) { throw 'Installed uninstaller is missing.' }
+
+          $stream = [System.IO.File]::OpenRead($exe)
+          try {
+            $reader = [System.IO.BinaryReader]::new($stream)
+            if ($reader.ReadUInt16() -ne 0x5A4D) { throw 'Installed executable is not a valid Windows PE file.' }
+            $stream.Position = 0x3C
+            $peOffset = $reader.ReadInt32()
+            $stream.Position = $peOffset
+            if ($reader.ReadUInt32() -ne 0x00004550) { throw 'Invalid PE signature.' }
+            if ($reader.ReadUInt16() -ne 0x8664) { throw 'Installed executable is not x64.' }
+          } finally {
+            $stream.Dispose()
+          }
+
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($uninstall.ExitCode)." }
+          if (Test-Path $exe) { throw 'Uninstaller did not remove the application executable.' }
+          Write-Host 'PASS: installer installed, x64 executable verified, and silent uninstall completed.'
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ABDULMALIK-ERP-Windows-Setup
+          path: builds/ABDULMALIK-ERP-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 30
