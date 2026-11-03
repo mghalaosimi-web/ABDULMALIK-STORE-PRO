@@ -551,4 +551,67 @@ const _migrations = <String>[
      OR (length(phone_norm) = 12 AND substr(phone_norm, 1, 3) = '966')
      OR (length(phone_norm) = 9 AND substr(phone_norm, 1, 1) = '5');
   ''',
+
+  // v10: شجرة تصنيفات موحدة وربط الأصناف بها مع الحفاظ على category النصي للتوافق.
+  '''
+  CREATE TABLE product_categories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    parent_id TEXT REFERENCES product_categories(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL,
+    CHECK(length(trim(name)) > 0)
+  );
+  CREATE UNIQUE INDEX uq_product_categories_sibling
+    ON product_categories(COALESCE(parent_id, ''), normalized_name);
+  INSERT OR IGNORE INTO product_categories(id, name, normalized_name, parent_id, created_at)
+    VALUES('system-accessories-root', 'الأكسسوارات', 'الأكسسوارات', NULL, datetime('now'));
+  ALTER TABLE products ADD COLUMN category_id TEXT REFERENCES product_categories(id);
+
+  -- تحويل التصنيفات النصية القديمة كما هي، دون تخمين ماركة/موديل غير موجودين في البيانات.
+  INSERT OR IGNORE INTO product_categories(id, name, normalized_name, parent_id, created_at)
+  SELECT lower(hex(randomblob(16))),
+         CASE WHEN instr(category, '::') > 0 THEN substr(category, 1, instr(category, '::') - 1) ELSE category END,
+         lower(trim(CASE WHEN instr(category, '::') > 0 THEN substr(category, 1, instr(category, '::') - 1) ELSE category END)),
+         NULL, datetime('now')
+  FROM products WHERE category IS NOT NULL AND trim(category) <> '';
+
+  INSERT OR IGNORE INTO product_categories(id, name, normalized_name, parent_id, created_at)
+  SELECT lower(hex(randomblob(16))),
+         substr(p.category, instr(p.category, '::') + 2),
+         lower(trim(substr(p.category, instr(p.category, '::') + 2))),
+         root.id, datetime('now')
+  FROM products p
+  JOIN product_categories root ON root.parent_id IS NULL
+    AND root.normalized_name = lower(trim(substr(p.category, 1, instr(p.category, '::') - 1)))
+  WHERE instr(p.category, '::') > 0;
+
+  UPDATE products SET category_id = (
+    SELECT child.id FROM product_categories child
+    LEFT JOIN product_categories parent ON parent.id = child.parent_id
+    WHERE (child.parent_id IS NULL AND child.normalized_name = lower(trim(products.category)))
+       OR (child.parent_id IS NOT NULL AND products.category = parent.name || '::' || child.name)
+    ORDER BY CASE WHEN child.parent_id IS NULL THEN 0 ELSE 1 END LIMIT 1
+  ) WHERE category IS NOT NULL AND trim(category) <> '';
+
+  CREATE INDEX idx_products_category_id ON products(category_id);
+  CREATE INDEX idx_categories_parent ON product_categories(parent_id);
+
+  -- حماية قاعدة البيانات نفسها من تكرار اسم الصنف داخل التصنيف ذاته.
+  CREATE TRIGGER trg_products_no_duplicate_insert
+  BEFORE INSERT ON products
+  WHEN NEW.category_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM products p WHERE p.category_id = NEW.category_id
+      AND lower(trim(p.name)) = lower(trim(NEW.name))
+  )
+  BEGIN SELECT RAISE(ABORT, 'DUPLICATE_PRODUCT_IN_CATEGORY'); END;
+
+  CREATE TRIGGER trg_products_no_duplicate_update
+  BEFORE UPDATE OF name, category_id ON products
+  WHEN NEW.category_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM products p WHERE p.id <> NEW.id AND p.category_id = NEW.category_id
+      AND lower(trim(p.name)) = lower(trim(NEW.name))
+  )
+  BEGIN SELECT RAISE(ABORT, 'DUPLICATE_PRODUCT_IN_CATEGORY'); END;
+  ''',
 ];

@@ -59,7 +59,8 @@ class ProductsScreen extends ConsumerStatefulWidget {
 class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   final _search = TextEditingController();
   String _query = '';
-  String? _category;
+  String? _selectedCategoryId;
+  String? _selectedCategoryPath;
   bool _lowOnly = false;
   Timer? _debounce;
 
@@ -110,148 +111,149 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     }
   }
 
+  Future<void> _createCategory(String? parentId) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('إضافة تصنيف فرعي'),
+      content: TextField(controller: controller, autofocus: true, decoration: const InputDecoration(labelText: 'اسم التصنيف')),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('إضافة')),
+      ],
+    ));
+    controller.dispose();
+    if (name == null || name.isEmpty || !mounted) return;
+    try {
+      await ref.read(sessionProvider).value!.api!.post('/api/products/categories',
+        {'name': name, 'parentId': parentId});
+      ref.invalidate(productCategoryTreeProvider);
+      ref.invalidate(categoriesProvider);
+      if (mounted) showMessage(context, 'تم إنشاء التصنيف: $name');
+    } catch (e) { if (mounted) showMessage(context, errorText(e)); }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(sessionProvider).value!.user!;
-    final data = ref.watch(productsProvider((q: _query, category: _category, low: _lowOnly, section: widget.accessories ? 'accessories' : 'general')));
-    final allCategories = ref.watch(categoriesProvider).value ?? const <String>[];
-    final categories = allCategories
-        .where((c) => widget.accessories ? isAccessoriesCategory(c) : !isAccessoriesCategory(c))
-        .map((c) => widget.accessories ? visibleProductCategory(c) : c)
-        .toList();
+    final treeAsync = ref.watch(productCategoryTreeProvider);
+    final tree = treeAsync.value ?? const <Map<String, dynamic>>[];
+    final roots = tree.where((n) => n['parentId'] == null).toList();
+    final accessoryRoot = roots.where((n) => n['name'] == 'الأكسسوارات').firstOrNull;
+    final accessoryRootId = accessoryRoot == null ? null : accessoryRoot['id'] as String;
+    final parentId = _selectedCategoryId ?? (widget.accessories ? accessoryRootId : null);
+    final path = _selectedCategoryPath ?? (widget.accessories && accessoryRoot != null ? 'الأكسسوارات' : null);
+    final children = tree.where((n) => n['parentId'] == parentId).toList();
+    final visibleChildren = parentId == null
+      ? roots.where((n) => widget.accessories ? n['name'] == 'الأكسسوارات' : n['name'] != 'الأكسسوارات').toList()
+      : children;
+    final storedPath = path == null ? null : (widget.accessories
+      ? (path == 'الأكسسوارات' ? null : storedAccessoriesCategory(path.substring('الأكسسوارات::'.length)))
+      : path);
+    final data = ref.watch(productsProvider((q: _query, category: storedPath, low: _lowOnly,
+      section: widget.accessories ? 'accessories' : 'general')));
+    final result = data.value;
     final scheme = Theme.of(context).colorScheme;
-    final r = data.value;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.accessories ? 'الأكسسوارات' : 'المخزون'),
+        title: Text(widget.accessories ? 'الأكسسوارات' : 'تصفح المخزون'),
         actions: [
+          if (path == null)
+            IconButton(tooltip: 'إضافة قسم رئيسي', onPressed: () => _createCategory(widget.accessories ? accessoryRootId : null), icon: const Icon(Icons.create_new_folder_outlined)),
           if (user.isOwner && !widget.accessories)
-            TextButton.icon(
-              onPressed: _addDemoProducts,
-              icon: const Icon(Icons.auto_awesome_rounded),
-              label: const Text('إضافة عينات تجريبية'),
-            ),
+            TextButton.icon(onPressed: _addDemoProducts, icon: const Icon(Icons.auto_awesome_rounded), label: const Text('عينات تجريبية')),
           if (user.isOwner && !widget.accessories)
-            TextButton.icon(
-              onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const ImportScreen())),
-              icon: const Icon(Icons.upload_file_rounded),
-              label: const Text('استيراد من Excel'),
-            ),
-          IconButton(
-            tooltip: 'طباعة رمز شريطي',
-            icon: const Icon(Icons.qr_code_2_rounded),
-            onPressed: r == null || r.items.isEmpty
-                ? null
-                : () => showDialog<void>(
-                    context: context,
-                    builder: (_) => _LabelsDialog(products: r.items.where((p) => p.barcode != null).toList()),
-                  ),
-          ),
+            TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const ImportScreen())),
+              icon: const Icon(Icons.upload_file_rounded), label: const Text('استيراد Excel')),
+          IconButton(tooltip: 'طباعة رمز شريطي', icon: const Icon(Icons.qr_code_2_rounded),
+            onPressed: result == null || result.items.isEmpty ? null : () => showDialog<void>(context: context,
+              builder: (_) => _LabelsDialog(products: result.items.where((p) => p.barcode != null).toList()))),
           const SizedBox(width: 8),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => showDialog<void>(context: context, builder: (_) => ProductDialog(accessories: widget.accessories)),
-        icon: const Icon(Icons.add_rounded),
-        label: Text(widget.accessories ? 'إضافة ملحق' : 'صنف جديد'),
+        onPressed: () => showDialog<void>(context: context, builder: (_) => ProductDialog(
+          accessories: widget.accessories,
+          initialCategory: path == null ? null : (widget.accessories ? path.replaceFirst('الأксسوارات::', '') : path),
+        )),
+        icon: const Icon(Icons.add_rounded), label: Text(path == null ? 'إضافة بضاعة' : 'إضافة صنف هنا'),
       ),
-      body: Column(
-        children: [
-          if (r != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Wrap(
-                spacing: 16,
-                runSpacing: 4,
-                children: [
-                  Text('${r.count} صنف', style: const TextStyle().semiBold),
-                  if (r.lowCount > 0)
-                    InkWell(
-                      onTap: () => setState(() => _lowOnly = !_lowOnly),
-                      child: Text('${r.lowCount} أوشك على النفاد', style: TextStyle(color: scheme.error).semiBold),
-                    ),
-                  if (r.stockValueCents != null) Text('قيمة المخزون (بسعر الشراء): ${money(r.stockValueCents!)}'),
+      body: Column(children: [
+        if (path != null)
+          Padding(padding: const EdgeInsetsDirectional.fromSTEB(16, 6, 16, 2), child: Row(children: [
+            TextButton.icon(onPressed: () => setState(() { _selectedCategoryId = null; _selectedCategoryPath = null; }),
+              icon: const Icon(Icons.arrow_back_rounded), label: const Text('كل الأقسام')),
+            Expanded(child: Text(path.replaceAll('::', '  /  '), maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700))),
+            IconButton(tooltip: 'إضافة مستوى فرعي', onPressed: () => _createCategory(parentId),
+              icon: const Icon(Icons.create_new_folder_outlined)),
+          ])),
+        Padding(padding: const EdgeInsets.fromLTRB(20, 4, 20, 8), child: TextField(
+          controller: _search,
+          decoration: InputDecoration(hintText: 'ابحث بالاسم أو الرمز الشريطي', prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: cameraScanSupported ? IconButton(icon: const Icon(Icons.photo_camera_rounded), onPressed: () async {
+              final code = await scanBarcode(context);
+              if (code != null) { _search.text = code; setState(() => _query = code); }
+            }) : null),
+          onChanged: (v) { _debounce?.cancel(); _debounce = Timer(const Duration(milliseconds: 300), () => setState(() => _query = v.trim())); })),
+        Expanded(child: treeAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (e, _) => Center(child: ErrorBanner(errorText(e))),
+          data: (_) => data.when(skipLoadingOnRefresh: true, skipLoadingOnReload: true,
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => Center(child: Padding(padding: const EdgeInsets.all(20), child: ErrorBanner(errorText(e)))),
+            data: (r) {
+              final showProducts = ((path != null && path != 'الأكسسوارات') || _query.isNotEmpty) && r.items.isNotEmpty;
+              if (visibleChildren.isEmpty && !showProducts) {
+                return EmptyState(
+                  icon: Icons.category_outlined,
+                  message: path == null
+                      ? 'لا توجد أقسام بعد.'
+                      : 'لا توجد عناصر هنا. أضف تصنيفاً فرعياً أو أضف بضاعة مباشرة.',
+                );
+              }
+              return ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 100), children: [
+                if (visibleChildren.isNotEmpty) ...[
+                  Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(
+                    path == null ? 'الأقسام الرئيسية' : 'الشركات والموديلات والتصنيفات',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800))),
+                  GridView.builder(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 220,
+                      mainAxisExtent: 104, crossAxisSpacing: 10, mainAxisSpacing: 10),
+                    itemCount: visibleChildren.length, itemBuilder: (context, index) {
+                      final node = visibleChildren[index];
+                      final nextPath = path == null ? node['name'] as String : '$path::${node['name']}';
+                      final hasChildren = tree.any((n) => n['parentId'] == node['id']);
+                      return Card(child: InkWell(borderRadius: BorderRadius.circular(14),
+                        onTap: () => setState(() {
+                          _selectedCategoryId = node['id'] as String;
+                          _selectedCategoryPath = nextPath;
+                          _lowOnly = false;
+                        }),
+                        child: Padding(padding: const EdgeInsets.all(14), child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+                            Icon(hasChildren ? Icons.folder_open_rounded : Icons.inventory_2_outlined, color: scheme.primary),
+                            const SizedBox(height: 8),
+                            Text(node['name'] as String, maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w700)),
+                          ]))));
+                    }),
                 ],
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-            child: TextField(
-              controller: _search,
-              decoration: InputDecoration(
-                hintText: 'ابحث بالاسم أو الرمز الشريطي',
-                prefixIcon: const Icon(Icons.search_rounded),
-                suffixIcon: cameraScanSupported
-                    ? IconButton(
-                        icon: const Icon(Icons.photo_camera_rounded),
-                        onPressed: () async {
-                          final code = await scanBarcode(context);
-                          if (code != null) {
-                            _search.text = code;
-                            setState(() => _query = code);
-                          }
-                        },
-                      )
-                    : null,
-              ),
-              onChanged: (v) {
-                _debounce?.cancel();
-                _debounce = Timer(const Duration(milliseconds: 300), () => setState(() => _query = v.trim()));
-              },
-            ),
-          ),
-          SizedBox(
-            height: 42,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              children: [
-                Padding(
-                  padding: const EdgeInsetsDirectional.only(end: 6),
-                  child: FilterChip(label: const Text('أوشك على النفاد'), selected: _lowOnly, onSelected: (v) => setState(() => _lowOnly = v)),
-                ),
-                Padding(
-                  padding: const EdgeInsetsDirectional.only(end: 6),
-                  child: ChoiceChip(
-                    label: const Text('كل الأقسام'),
-                    selected: _category == null,
-                    onSelected: (_) => setState(() => _category = null),
-                  ),
-                ),
-                for (final c in categories)
-                  Padding(
-                    padding: const EdgeInsetsDirectional.only(end: 6),
-                    child: ChoiceChip(label: Text(c), selected: (widget.accessories ? visibleProductCategory(_category) : _category) == c, onSelected: (_) => setState(() => _category = widget.accessories ? storedAccessoriesCategory(c) : c)),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: data.when(
-              skipLoadingOnRefresh: true,
-              skipLoadingOnReload: true,
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(
-                child: Padding(padding: const EdgeInsets.all(20), child: ErrorBanner(errorText(e))),
-              ),
-              data: (r) => r.items.isEmpty
-                  ? EmptyState(
-                      icon: Icons.inventory_2_outlined,
-                      message: _query.isEmpty && _category == null && !_lowOnly
-                          ? (widget.accessories ? 'لا توجد أكسسوارات حتى الآن.\nابدأ بإضافة أول ملحق وتحديد تصنيفه.' : 'لا توجد أصناف حتى الآن.\nأضف صنفاً جديداً، أو استورد الأصناف من ملف Excel من برنامجك السابق.')
-                          : 'لا توجد أصناف هنا',
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
-                      itemCount: r.items.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 6),
-                      itemBuilder: (context, i) => _ProductRow(product: r.items[i], showCost: user.isOwner, accessories: widget.accessories),
-                    ),
-            ),
-          ),
-        ],
-      ),
+                if (showProducts) ...[
+                  Padding(padding: const EdgeInsets.only(top: 18, bottom: 8), child: Wrap(spacing: 14, children: [
+                    Text('الأصناف في هذا المستوى', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                    Text('${r.count} صنف'),
+                    if (r.lowCount > 0) InkWell(onTap: () => setState(() => _lowOnly = !_lowOnly),
+                      child: Text('${r.lowCount} أوشك على النفاد', style: TextStyle(color: scheme.error))),
+                    if (r.stockValueCents != null) Text('قيمة المخزون: ${money(r.stockValueCents!)}'),
+                  ])),
+                  ...r.items.map((p) => Padding(padding: const EdgeInsets.only(bottom: 6),
+                    child: _ProductRow(product: p, showCost: user.isOwner, accessories: widget.accessories))),
+                ],
+              ]);
+            }),
+        )),
+      ]),
     );
   }
 }
@@ -547,9 +549,10 @@ class _ProductImageThumbnail extends ConsumerWidget {
 }
 
 class ProductDialog extends ConsumerStatefulWidget {
-  const ProductDialog({super.key, this.product, this.initialBarcode, this.accessories = false});
+  const ProductDialog({super.key, this.product, this.initialBarcode, this.initialCategory, this.accessories = false});
   final Product? product;
   final String? initialBarcode;
+  final String? initialCategory;
   final bool accessories;
 
   @override
@@ -561,7 +564,7 @@ class _ProductDialogState extends ConsumerState<ProductDialog> {
   late final p = widget.product;
   late final _name = TextEditingController(text: p?.name);
   late final _barcode = TextEditingController(text: p?.barcode ?? widget.initialBarcode);
-  late final _category = TextEditingController(text: widget.accessories ? visibleProductCategory(p?.category) : p?.category);
+  late final _category = TextEditingController(text: widget.accessories ? visibleProductCategory(p?.category) : (p?.category ?? widget.initialCategory));
   late final _cost = TextEditingController(text: p == null ? '' : moneyInput(p!.costCents));
   late final _price = TextEditingController(text: p == null ? '' : moneyInput(p!.priceCents));
   late final _qty = TextEditingController(text: p == null ? '' : '${p!.qty}');

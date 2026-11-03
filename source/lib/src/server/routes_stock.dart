@@ -454,9 +454,9 @@ extension _StockRoutes on AbdulmalikErpServer {
         final pid = _uuid.v4();
         final now = nowIso();
         db.execute(
-          'INSERT INTO products(id, name, category, cost_cents, price_cents, qty, low_stock, track_stock, serialized, created_at, updated_at) '
-          "VALUES(?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?)",
-          [pid, _requiredText(body, 'model', 'موديل الجهاز'), 'أجهزة مستعملة', cost,
+          'INSERT INTO products(id, name, category, category_id, cost_cents, price_cents, qty, low_stock, track_stock, serialized, created_at, updated_at) '
+          "VALUES(?, ?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?)",
+          [pid, _requiredText(body, 'model', 'موديل الجهاز'), 'أجهزة مستعملة', _ensureCategoryForValue('أجهزة مستعملة'), cost,
            body['priceCents'] is int ? body['priceCents'] : cost, now, now],
         );
         product = db.selectOne('SELECT * FROM products WHERE id = ?', [pid]);

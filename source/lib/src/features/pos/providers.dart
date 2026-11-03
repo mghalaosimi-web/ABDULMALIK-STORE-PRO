@@ -31,6 +31,12 @@ final categoriesProvider = FutureProvider.autoDispose<List<String>>((ref) async 
   return (res['categories'] as List).cast<String>();
 });
 
+final productCategoryTreeProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+  refreshOn(ref, 'products');
+  final res = await apiOf(ref).get('/api/products/categories');
+  return (res['tree'] as List? ?? const []).cast<Map<String, dynamic>>();
+});
+
 typedef SalesQuery = ({String q, bool dueOnly});
 
 final salesProvider = FutureProvider.autoDispose.family<List<SaleSummary>, SalesQuery>((ref, query) async {

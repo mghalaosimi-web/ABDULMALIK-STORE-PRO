@@ -4,6 +4,27 @@ part of 'api_server.dart';
 extension _ReportRoutes on AbdulmalikErpServer {
   void _registerReportRoutes(Router r) {
     r.get('/api/reports/summary', _authed(_reportSummary, only: {'owner'}));
+    r.get('/api/reports/inventory', _authed(_inventoryReport, only: {'owner'}));
+  }
+
+  Object? _inventoryReport(Request req, AuthUser u) {
+    final rows = db.select(
+      "SELECT p.id, p.name, p.category, p.qty, p.track_stock, p.serialized, p.active, "
+      "COALESCE(c.name, p.category, 'غير مصنف') AS categoryName, "
+      "COALESCE((SELECT group_concat(name, ' / ') FROM (WITH RECURSIVE ancestors(id, name, parent_id, depth) AS (SELECT id, name, parent_id, 0 FROM product_categories WHERE id = c.id UNION ALL SELECT a.id, a.name, a.parent_id, x.depth + 1 FROM product_categories a JOIN ancestors x ON x.parent_id = a.id) SELECT name FROM ancestors ORDER BY depth DESC)), COALESCE(c.name, p.category, 'غير مصنف')) AS categoryPath, "
+      "COALESCE((SELECT SUM(CASE WHEN sm.reason = 'purchase' AND sm.qty_change > 0 THEN sm.qty_change ELSE 0 END) FROM stock_moves sm WHERE sm.product_id = p.id), 0) AS incomingQty, "
+      "COALESCE((SELECT SUM(si.qty - si.returned_qty) FROM sale_items si WHERE si.product_id = p.id), 0) AS soldQty, "
+      "COALESCE((SELECT SUM(sm.qty_change) FROM stock_moves sm WHERE sm.product_id = p.id AND sm.reason = 'return' AND sm.qty_change > 0), 0) AS returnedQty, "
+      "CASE WHEN p.serialized = 1 THEN (SELECT COUNT(*) FROM units x WHERE x.product_id = p.id AND x.status = 'in_stock') ELSE p.qty END AS currentQty "
+      "FROM products p LEFT JOIN product_categories c ON c.id = p.category_id "
+      "WHERE p.active = 1 ORDER BY categoryPath COLLATE NOCASE, p.name COLLATE NOCASE",
+    );
+    return {'items': rows, 'totals': {
+      'incomingQty': rows.fold<int>(0, (s, r) => s + ((r['incomingQty'] as int?) ?? 0)),
+      'soldQty': rows.fold<int>(0, (s, r) => s + ((r['soldQty'] as int?) ?? 0)),
+      'returnedQty': rows.fold<int>(0, (s, r) => s + ((r['returnedQty'] as int?) ?? 0)),
+      'currentQty': rows.fold<int>(0, (s, r) => s + ((r['currentQty'] as int?) ?? 0)),
+    }};
   }
 
   Object? _reportSummary(Request req, AuthUser u) {

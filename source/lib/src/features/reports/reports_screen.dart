@@ -14,6 +14,10 @@ final reportProvider = FutureProvider.autoDispose.family<Map<String, dynamic>, (
   return apiOf(ref).get('/api/reports/summary', query: {'from': r.from, 'to': r.to});
 });
 
+final inventoryReportProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  return apiOf(ref).get('/api/reports/inventory');
+});
+
 List<ReportRange> _presets() {
   final n = DateTime.now();
   final today = DateTime(n.year, n.month, n.day);
@@ -255,11 +259,62 @@ class _ReportBody extends StatelessWidget {
         rows: [for (final d in (stock['deadStock'] as List).cast<Map<String, dynamic>>()) [d['name'] as String, '${d['qty']}', money(d['value'] as int)]],
         empty: 'لا توجد بضائع راكدة.',
       ),
+      const SizedBox(height: 12),
+      const _InventoryReportSection(),
     ]);
   }
 }
 
 /// رسم أعمدة بسيط لمجموعة واحدة (الدخل اليومي): أعمدة رفيعة بحواف مدورة، وخطوط خلفية هادية، والقيمة بتظهر بالضغط أو بالماوس.
+class _InventoryReportSection extends ConsumerWidget {
+  const _InventoryReportSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final data = ref.watch(inventoryReportProvider);
+    return data.when(
+      loading: () => const SectionCard(title: 'حركة المخزون حسب الصنف', icon: Icons.inventory_2_outlined,
+        children: [Center(child: Padding(padding: EdgeInsets.all(18), child: CircularProgressIndicator()))]),
+      error: (e, _) => SectionCard(title: 'حركة المخزون حسب الصنف', icon: Icons.inventory_2_outlined,
+        children: [ErrorBanner(errorText(e))]),
+      data: (report) {
+        final totals = report['totals'] as Map<String, dynamic>;
+        final items = (report['items'] as List).cast<Map<String, dynamic>>();
+        final rows = [for (final item in items) [
+          item['categoryPath'] as String? ?? 'غير مصنف',
+          item['name'] as String,
+          (item['incomingQty'] as int? ?? 0).toString(),
+          (item['soldQty'] as int? ?? 0).toString(),
+          (item['returnedQty'] as int? ?? 0).toString(),
+          (item['currentQty'] as int? ?? 0).toString(),
+        ]];
+        return SectionCard(title: 'حركة المخزون حسب الصنف', icon: Icons.inventory_2_outlined, children: [
+          Wrap(spacing: 16, runSpacing: 8, children: [
+            Text('الوارد شراءً: ${totals['incomingQty']}'),
+            Text('المباع: ${totals['soldQty']}'),
+            Text('المرتجع: ${totals['returnedQty']}'),
+            Text('الرصيد الحالي: ${totals['currentQty']}'),
+          ]),
+          const SizedBox(height: 10),
+          if (rows.isEmpty) const Text('لا توجد أصناف في المخزون.')
+          else SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
+            headingRowHeight: 38, dataRowMinHeight: 36, dataRowMaxHeight: 52, columnSpacing: 20,
+            columns: const [
+              DataColumn(label: Text('القسم / المسار')),
+              DataColumn(label: Text('الصنف')),
+              DataColumn(label: Text('الوارد')),
+              DataColumn(label: Text('المباع')),
+              DataColumn(label: Text('المرتجع')),
+              DataColumn(label: Text('الرصيد')),
+            ],
+            rows: [for (final row in rows) DataRow(cells: [for (final value in row) DataCell(Text(value))])],
+          )),
+        ]);
+      },
+    );
+  }
+}
+
 class _DailyBars extends StatefulWidget {
   const _DailyBars({required this.days});
   final List<Map<String, dynamic>> days;
