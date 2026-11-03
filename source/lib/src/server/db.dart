@@ -614,4 +614,13 @@ const _migrations = <String>[
   )
   BEGIN SELECT RAISE(ABORT, 'DUPLICATE_PRODUCT_IN_CATEGORY'); END;
   ''',
+
+  // v11: جعل الهواتف المحمولة قسماً أصلياً في شجرة المخزون.
+  '''
+  INSERT OR IGNORE INTO product_categories(id, name, normalized_name, parent_id, created_at)
+    VALUES('system-phones-root', 'الهواتف المحمولة', 'الهواتف المحمولة', NULL, datetime('now'));
+  UPDATE products
+  SET category_id = 'system-phones-root', category = 'الهواتف المحمولة'
+  WHERE category_id IS NULL AND category IN ('أجهزة محمولة', 'أجهزة مستعملة', 'الهواتف المحمولة');
+  ''',
 ];
