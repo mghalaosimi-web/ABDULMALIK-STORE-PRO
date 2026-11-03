@@ -83,8 +83,14 @@ extension _PosRoutes on AbdulmalikErpServer {
       params.addAll(['%$q%', q, '%$q%']);
     }
     if ((qp['category'] ?? '').isNotEmpty) {
-      where.add('category = ?');
-      params.add(qp['category']);
+      final category = qp['category']!;
+      if (category == 'الهواتف المحمولة') {
+        where.add('(category = ? OR category LIKE ?)');
+        params.addAll([category, '$category::%']);
+      } else {
+        where.add('category = ?');
+        params.add(category);
+      }
     }
     // افصل الأكسسوارات عن المخزون العام دون تغيير بنية قاعدة البيانات أو كسر الأصناف القديمة.
     if (qp['section'] == 'accessories') {
