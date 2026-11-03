@@ -61,7 +61,7 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const BuyUsedScreen())),
         icon: const Icon(Icons.add_shopping_cart_rounded),
-        label: const Text('شراء جهاز مستعمل'),
+        label: const Text('شراء هاتف من زبون'),
       ),
       body: Column(children: [
         Padding(
@@ -463,10 +463,6 @@ class _BuyUsedScreenState extends ConsumerState<BuyUsedScreen> {
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
-    if (_photoId == null) {
-      setState(() => _error = 'يجب إرفاق صورة هوية البائع أولاً؛ وذلك للتحقق من مصدر الجهاز.');
-      return;
-    }
     setState(() {
       _busy = true;
       _error = null;
@@ -579,9 +575,9 @@ class _BuyUsedScreenState extends ConsumerState<BuyUsedScreen> {
       TextFormField(controller: _notes, maxLines: 2, decoration: const InputDecoration(labelText: 'حالة الجهاز (البطارية، الخدوش، وهل سبق فتحه...)')),
     ]);
     final seller = SectionCard(title: 'البائع', icon: Icons.badge_rounded, children: [
-      TextFormField(controller: _sellerName, decoration: const InputDecoration(labelText: 'الاسم (كما هو مدوّن في الهوية) *'), validator: (v) => (v ?? '').trim().isEmpty ? 'يُرجى إدخال الاسم' : null),
+      TextFormField(controller: _sellerName, decoration: const InputDecoration(labelText: 'اسم البائع (اختياري)')),
       const SizedBox(height: 12),
-      TextFormField(controller: _sellerPhone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم الهاتف *'), validator: (v) => normalizePhone(v ?? '').length < 10 ? 'يُرجى إدخال رقم صحيح' : null),
+      TextFormField(controller: _sellerPhone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم الهاتف (اختياري)')),
       const SizedBox(height: 12),
       TextFormField(
         controller: _nationalId,
@@ -589,11 +585,11 @@ class _BuyUsedScreenState extends ConsumerState<BuyUsedScreen> {
         textDirection: TextDirection.ltr,
         maxLength: 14,
         decoration: const InputDecoration(
-          labelText: 'رقم الهوية الوطنية أو الإقامة *',
+          labelText: 'رقم الهوية الوطنية أو الإقامة (اختياري)',
           helperText: 'يتكون الرقم السعودي من 10 أرقام.',
           counterText: '',
         ),
-        validator: (v) => isValidNationalId(v ?? '') ? null : 'رقم الهوية غير صحيح.',
+        validator: (v) => (v ?? '').trim().isEmpty || isValidNationalId(v ?? '') ? null : 'رقم الهوية غير صحيح.',
       ),
       const SizedBox(height: 12),
       OutlinedButton.icon(
@@ -601,7 +597,7 @@ class _BuyUsedScreenState extends ConsumerState<BuyUsedScreen> {
         icon: _photoBusy
             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
             : Icon(_photoId == null ? Icons.photo_camera_rounded : Icons.check_circle_rounded, color: _photoId == null ? null : const Color(0xFF16A34A)),
-        label: Text(_photoId == null ? 'التقط صورة الهوية *' : 'تم التقاط صورة الهوية ✓ (التقاط صورة أخرى؟)'),
+        label: Text(_photoId == null ? 'إرفاق صورة الهوية (اختياري)' : 'تم التقاط صورة الهوية ✓ (التقاط صورة أخرى؟)'),
       ),
     ]);
     final price = SectionCard(title: 'السعر', icon: Icons.payments_rounded, children: [
@@ -618,7 +614,7 @@ class _BuyUsedScreenState extends ConsumerState<BuyUsedScreen> {
     ]);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('شراء جهاز مستعمل')),
+      appBar: AppBar(title: const Text('شراء هاتف من زبون')),
       body: Form(
         key: _form,
         child: ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 24), children: [
@@ -633,7 +629,7 @@ class _BuyUsedScreenState extends ConsumerState<BuyUsedScreen> {
           const SizedBox(height: 16),
           Align(
             alignment: AlignmentDirectional.centerEnd,
-            child: SizedBox(width: wide ? 320 : double.infinity, child: BusyButton(label: 'تسجيل الشراء', icon: Icons.check_rounded, busy: _busy, onPressed: _save)),
+            child: SizedBox(width: wide ? 320 : double.infinity, child: BusyButton(label: 'تسجيل شراء الهاتف', icon: Icons.check_rounded, busy: _busy, onPressed: _save)),
           ),
         ]),
       ),
