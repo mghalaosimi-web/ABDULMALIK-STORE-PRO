@@ -165,6 +165,12 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
           if (user.isOwner && !widget.accessories)
             TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const ImportScreen())),
               icon: const Icon(Icons.upload_file_rounded), label: const Text('استيراد Excel')),
+          if (!widget.accessories && (path == 'الهواتف المحمولة' || (path?.startsWith('الهواتف المحمولة::') ?? false)))
+            TextButton.icon(
+              onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const BuyUsedScreen())),
+              icon: const Icon(Icons.shopping_bag_outlined),
+              label: const Text('شراء هاتف من زبون'),
+            ),
           IconButton(tooltip: 'طباعة رمز شريطي', icon: const Icon(Icons.qr_code_2_rounded),
             onPressed: result == null || result.items.isEmpty ? null : () => showDialog<void>(context: context,
               builder: (_) => _LabelsDialog(products: result.items.where((p) => p.barcode != null).toList()))),
@@ -276,13 +282,19 @@ class _ProductRow extends StatelessWidget {
         subtitle: Text([if ((p.category ?? '').isNotEmpty) visibleProductCategory(p.category), if (p.barcode != null) p.barcode!, if (showCost) 'سعر الشراء ${money(p.costCents)}'].join(' • ')),
         leading: p.imageFileId != null
             ? _ProductImageThumbnail(fileId: p.imageFileId!, size: 52)
-            : p.trackStock && !p.serialized
+            : p.serialized
                 ? IconButton.filledTonal(
-                    tooltip: 'إضافة كمية واردة',
+                    tooltip: 'إضافة أجهزة بأرقام IMEI',
                     icon: const Icon(Icons.add_rounded),
-                    onPressed: () => showDialog<void>(context: context, builder: (_) => AddStockDialog(product: p)),
+                    onPressed: () => showDialog<void>(context: context, builder: (_) => AddUnitsDialog(product: p)),
                   )
-                : null,
+                : p.trackStock
+                    ? IconButton.filledTonal(
+                        tooltip: 'إضافة كمية واردة',
+                        icon: const Icon(Icons.add_rounded),
+                        onPressed: () => showDialog<void>(context: context, builder: (_) => AddStockDialog(product: p)),
+                      )
+                    : null,
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.end,
