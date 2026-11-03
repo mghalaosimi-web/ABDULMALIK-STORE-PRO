@@ -45,6 +45,7 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
   @override
   Widget build(BuildContext context) {
     final units = ref.watch(unitsProvider((status: _status, condition: _condition, q: _query, productId: null)));
+    final phoneProducts = ref.watch(productsProvider((q: _query, category: 'الهواتف المحمولة', low: false, section: 'general')));
     final isOwner = ref.watch(sessionProvider).value!.user!.isOwner;
     return Scaffold(
       appBar: AppBar(
@@ -96,17 +97,50 @@ class _PhonesScreenState extends ConsumerState<PhonesScreen> {
             skipLoadingOnReload: true,
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => Center(child: Padding(padding: const EdgeInsets.all(20), child: ErrorBanner(errorText(e)))),
-            data: (list) => list.isEmpty
-                ? const EmptyState(
-                    icon: Icons.phone_iphone_rounded,
-                    message: 'لا توجد أجهزة هنا.\nتُضاف الأجهزة الجديدة من شاشة "المشتريات"، أما الأجهزة المستعملة فتُسجّل من زر "شراء جهاز مستعمل".',
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
-                    itemCount: list.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 6),
-                    itemBuilder: (context, i) => _UnitTile(unit: list[i], showCost: isOwner),
+            data: (list) => ListView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
+              children: [
+                phoneProducts.when(
+                  loading: () => const LinearProgressIndicator(),
+                  error: (e, _) => ErrorBanner(errorText(e)),
+                  data: (catalog) => catalog.items.isEmpty ? const SizedBox.shrink() : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(children: [
+                          const Icon(Icons.inventory_2_outlined, size: 19),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text('أصناف الهواتف في المخزون', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800))),
+                          Text('${catalog.items.length} صنف'),
+                        ]),
+                      ),
+                      for (final product in catalog.items)
+                        Card(
+                          child: ListTile(
+                            leading: CircleAvatar(child: Icon(product.serialized ? Icons.phone_iphone_rounded : Icons.inventory_2_outlined)),
+                            title: Text(product.name, style: const TextStyle().semiBold),
+                            subtitle: Text([if ((product.category ?? '').isNotEmpty) product.category!, if (product.barcode != null) 'باركود ${product.barcode}', if (isOwner) 'سعر الشراء ${money(product.costCents)}'].join(' • ')),
+                            trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                              Text(money(product.priceCents), style: TextStyle(color: Theme.of(context).colorScheme.primary).bold),
+                              Text(product.serialized ? 'أجهزة مسجلة: ${product.qty}' : 'الكمية: ${product.qty}', style: Theme.of(context).textTheme.bodySmall),
+                            ]),
+                            onTap: product.serialized ? () => showDialog<void>(context: context, builder: (_) => AddUnitsDialog(product: product)) : null,
+                          ),
+                        ),
+                    ],
                   ),
+                ),
+                if (list.isEmpty && (phoneProducts.value?.items.isEmpty ?? true))
+                  const EmptyState(icon: Icons.phone_iphone_rounded, message: 'لا توجد أجهزة هنا. أضف أصناف الهواتف من المخزون أو سجّل شراء هاتف من زبون.'),
+                if (list.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text('الأجهزة المسجلة بأرقام IMEI', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 6),
+                  for (final unit in list) _UnitTile(unit: unit, showCost: isOwner),
+                ],
+              ],
+            ),
           ),
         ),
       ]),
