@@ -14,7 +14,7 @@ extension _ReportRoutes on AbdulmalikErpServer {
       "COALESCE((SELECT group_concat(name, ' / ') FROM (WITH RECURSIVE ancestors(id, name, parent_id, depth) AS (SELECT id, name, parent_id, 0 FROM product_categories WHERE id = c.id UNION ALL SELECT a.id, a.name, a.parent_id, x.depth + 1 FROM product_categories a JOIN ancestors x ON x.parent_id = a.id) SELECT name FROM ancestors ORDER BY depth DESC)), COALESCE(c.name, p.category, 'غير مصنف')) AS categoryPath, "
       "COALESCE((SELECT SUM(CASE WHEN sm.reason = 'purchase' AND sm.qty_change > 0 THEN sm.qty_change ELSE 0 END) FROM stock_moves sm WHERE sm.product_id = p.id), 0) AS incomingQty, "
       "COALESCE((SELECT SUM(si.qty - si.returned_qty) FROM sale_items si WHERE si.product_id = p.id), 0) AS soldQty, "
-      "COALESCE((SELECT SUM(sm.qty_change) FROM stock_moves sm WHERE sm.product_id = p.id AND sm.reason = 'return' AND sm.qty_change > 0), 0) AS returnedQty, "
+      "COALESCE((SELECT SUM(sm.qty_change) FROM stock_moves sm WHERE sm.product_id = p.id AND sm.reason = 'return' AND sm.ref_type = 'sale' AND sm.qty_change > 0), 0) AS returnedQty, "
       "CASE WHEN p.serialized = 1 THEN (SELECT COUNT(*) FROM units x WHERE x.product_id = p.id AND x.status = 'in_stock') ELSE p.qty END AS currentQty "
       "FROM products p LEFT JOIN product_categories c ON c.id = p.category_id "
       "WHERE p.active = 1 ORDER BY categoryPath COLLATE NOCASE, p.name COLLATE NOCASE",
