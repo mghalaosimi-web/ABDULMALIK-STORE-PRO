@@ -36,4 +36,39 @@ void main() {
     db.close();
     await dir.delete(recursive: true);
   });
+
+  test('v10 backfills legacy accessory categories and always creates the accessories root', () async {
+    final dir = await Directory.systemTemp.createTemp('abdulmalik_category_migration');
+    final path = '${dir.path}/shop.db';
+
+    var db = AppDb.open(path);
+    // Rewind this temporary database to the v9 schema and insert a legacy product.
+    db.execute('DROP TRIGGER IF EXISTS trg_products_no_duplicate_insert');
+    db.execute('DROP TRIGGER IF EXISTS trg_products_no_duplicate_update');
+    db.execute('DROP INDEX IF EXISTS idx_products_category_id');
+    db.execute('ALTER TABLE products DROP COLUMN category_id');
+    db.execute('DROP TABLE product_categories');
+    db.raw.userVersion = 9;
+    db.execute(
+      'INSERT INTO products(id, name, category, created_at, updated_at) VALUES(?, ?, ?, ?, ?)',
+      ['legacy-accessory', 'شاحن قديم', 'الأكسسوارات::شواحن', DateTime.utc(2026).toIso8601String(), DateTime.utc(2026).toIso8601String()],
+    );
+    db.close();
+
+    db = AppDb.open(path);
+    final row = db.selectOne(
+      'SELECT p.category_id, c.name, c.parent_id FROM products p JOIN product_categories c ON c.id = p.category_id WHERE p.id = ?',
+      ['legacy-accessory'],
+    );
+    expect(row, isNotNull);
+    expect(row!['name'], 'شواحن');
+    expect(row['parent_id'], isNotNull);
+    expect(
+      db.selectOne("SELECT id FROM product_categories WHERE name = 'الأكسسوارات' AND parent_id IS NULL"),
+      isNotNull,
+    );
+
+    db.close();
+    await dir.delete(recursive: true);
+  });
 }
