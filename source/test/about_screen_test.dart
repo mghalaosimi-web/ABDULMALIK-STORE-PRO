@@ -13,9 +13,10 @@ void main() {
     ));
 
     expect(find.text('عن المشروع والفريق'), findsOneWidget);
-    expect(find.text('M.GH.AL'), findsOneWidget);
-    expect(find.text('شركة للبرمجيات والأنظمة والتطبيقات'), findsOneWidget);
-    expect(find.textContaining('شارة توثيق تعريفية للمشروع'), findsOneWidget);
+    // Company branding stays hidden until 2027-01-04.
+    expect(find.text('M.GH.AL'), findsNothing);
+    expect(find.text('شركة للبرمجيات والأنظمة والتطبيقات'), findsNothing);
+    expect(find.textContaining('شارة توثيق تعريفية للمشروع'), findsNothing);
     expect(find.text('فريق العمل والهيكل الأكاديمي والتقني للمشروع'), findsOneWidget);
     expect(find.text('أولاً: اللجنة الأكاديمية والاستشارية'), findsOneWidget);
     expect(find.text('ثانياً: فريق الهندسة والتطوير'), findsOneWidget);

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/app_config.dart';
+import '../../core/branding_visibility.dart';
 import '../../core/locale.dart';
 import '../../core/app_info.dart';
 import '../../core/firebase_config.dart';
@@ -185,9 +186,13 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
-          SectionTitle(ar ? 'التواصل وتطوير النظام' : 'Support and product development'),
-          Card(
-            child: Column(children: [
+          BrandingVisibilityGate(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SectionTitle(ar ? 'التواصل وتطوير النظام' : 'Support and product development'),
+                Card(
+                  child: Column(children: [
               ListTile(
                 leading: const Icon(Icons.business_rounded),
                 title: const Text('العصيمي للبرمجيات والحلول التقنية المتطورة'),
@@ -217,7 +222,10 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                 ),
               ),
-            ]),
+                  ]),
+                ),
+              ],
+            ),
           ),
           SectionTitle(ar ? 'التشخيص' : 'Diagnostics'),
           Card(

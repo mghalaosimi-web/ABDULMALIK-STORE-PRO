@@ -96,6 +96,49 @@ void main() {
     expect(generalNames, ['Alpha general', 'Zeta general']);
   });
 
+  test('category tree supports nested categories and duplicate products are checked safely', () async {
+    final root = (await owner.post('/api/products/categories', {'name': 'هواتف'}))['category'] as Map;
+    final brand = (await owner.post('/api/products/categories', {'name': 'Samsung', 'parentId': root['id']}))['category'] as Map;
+    final model = (await owner.post('/api/products/categories', {'name': 'Galaxy A55', 'parentId': brand['id']}))['category'] as Map;
+
+    final tree = (await owner.get('/api/products/categories'))['tree'] as List;
+    final modelNode = tree.cast<Map<String, dynamic>>().singleWhere((node) => node['id'] == model['id']);
+    expect(modelNode['parentId'], brand['id']);
+
+    final first = await owner.post('/api/products', {
+      'name': 'Galaxy A55 128GB أسود',
+      'category': 'هواتف::Samsung::Galaxy A55',
+      'qty': 4,
+      'priceCents': 1000,
+    });
+    final firstProduct = first['product'] as Map;
+    await expectApiError(owner.post('/api/products', {
+      'name': ' galaxy a55 128gb أسود ',
+      'category': 'هواتف::Samsung::Galaxy A55',
+      'qty': 1,
+    }), 409);
+
+    // نسخة مختلفة (لون/سعة ضمن اسم الصنف) تظل منتجاً مستقلاً.
+    final variant = await owner.post('/api/products', {
+      'name': 'Galaxy A55 256GB أزرق',
+      'category': 'هواتف::Samsung::Galaxy A55',
+      'qty': 2,
+    });
+    expect((variant['product'] as Map)['id'], isNot(firstProduct['id']));
+
+    // تحديث الصنف نفسه لا يعتبر تكراراً لنفس السجل.
+    final firstId = firstProduct['id'] as String;
+    await owner.patch('/api/products/$firstId', {'name': 'Galaxy A55 128GB أسود'});
+    // إفراغ التصنيف يفصل المنتج عن الشجرة بشكل صحيح.
+    await owner.patch('/api/products/$firstId', {'category': ''});
+    final sameNameInCategory = await owner.post('/api/products', {
+      'name': 'Galaxy A55 128GB أسود',
+      'category': 'هواتف::Samsung::Galaxy A55',
+      'qty': 1,
+    });
+    expect((sameNameInCategory['product'] as Map)['id'], isNot(firstId));
+  });
+
   test('products: create, barcode lookup, duplicate barcode, low stock', () async {
     final p = await product('جراب A55 شفاف', barcode: '6221234567890', qty: 2);
     expect(p['qty'], 2);

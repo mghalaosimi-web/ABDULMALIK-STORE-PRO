@@ -427,13 +427,17 @@ extension _StockRoutes on AbdulmalikErpServer {
   Future<Object?> _buyUsed(Request req, AuthUser u) async {
     await _requireLicense();
     final body = await _body(req);
-    final sellerName = _requiredText(body, 'sellerName', 'اسم البائع');
-    final sellerPhone = _validPhone(body['sellerPhone']);
+    // بيانات البائع اختيارية ولا نفرض جمع بيانات هوية شخصية لإتمام الشراء.
+    final sellerName = (body['sellerName'] as String? ?? '').trim();
+    final rawSellerPhone = (body['sellerPhone'] as String? ?? '').trim();
+    final sellerPhone = rawSellerPhone.isEmpty ? null : _validPhone(rawSellerPhone);
     final nationalId = latinDigits((body['sellerNationalId'] as String? ?? '').trim());
-    if (!isValidNationalId(nationalId)) throw ApiError(400, 'رقم الهوية الوطنية أو الإقامة غير صحيح.');
+    if (nationalId.isNotEmpty && !isValidNationalId(nationalId)) {
+      throw ApiError(400, 'رقم الهوية الوطنية أو الإقامة غير صحيح.');
+    }
     final photo = body['idPhotoId'] as String?;
-    if (photo == null || db.selectOne('SELECT id FROM files WHERE id = ?', [photo]) == null) {
-      throw ApiError(400, 'يجب إرفاق صورة هوية البائع.');
+    if (photo != null && db.selectOne('SELECT id FROM files WHERE id = ?', [photo]) == null) {
+      throw ApiError(400, 'صورة هوية البائع غير موجودة.');
     }
     final imei = _validImei(body['imei']);
     if (db.selectOne("SELECT id FROM units WHERE (imei = ? OR imei2 = ?) AND status = 'in_stock'", [imei, imei]) != null) {
@@ -451,15 +455,28 @@ extension _StockRoutes on AbdulmalikErpServer {
     }
     final id = db.transaction(() {
       if (product == null) {
-        final pid = _uuid.v4();
-        final now = nowIso();
-        db.execute(
-          'INSERT INTO products(id, name, category, cost_cents, price_cents, qty, low_stock, track_stock, serialized, created_at, updated_at) '
-          "VALUES(?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?)",
-          [pid, _requiredText(body, 'model', 'موديل الجهاز'), 'أجهزة مستعملة', cost,
-           body['priceCents'] is int ? body['priceCents'] : cost, now, now],
+        final model = _requiredText(body, 'model', 'موديل الجهاز');
+        final storage = (body['storage'] as String? ?? '').trim();
+        final color = (body['color'] as String? ?? '').trim();
+        final variantName = [model,
+          if (storage.isNotEmpty && !model.toLowerCase().contains(storage.toLowerCase())) storage,
+          if (color.isNotEmpty) color].join(' • ');
+        final phoneCategoryId = _ensureCategoryForValue('الهواتف المحمولة');
+        product = db.selectOne(
+          'SELECT * FROM products WHERE category_id = ? AND lower(trim(name)) = lower(trim(?)) LIMIT 1',
+          [phoneCategoryId, variantName],
         );
-        product = db.selectOne('SELECT * FROM products WHERE id = ?', [pid]);
+        if (product == null) {
+          final pid = _uuid.v4();
+          final now = nowIso();
+          db.execute(
+            'INSERT INTO products(id, name, category, category_id, cost_cents, price_cents, qty, low_stock, track_stock, serialized, created_at, updated_at) '
+            "VALUES(?, ?, ?, ?, ?, ?, 0, 0, 1, 1, ?, ?)",
+            [pid, variantName, 'الهواتف المحمولة', phoneCategoryId, cost,
+             body['priceCents'] is int ? body['priceCents'] : cost, now, now],
+          );
+          product = db.selectOne('SELECT * FROM products WHERE id = ?', [pid]);
+        }
       } else if (product!['serialized'] != 1) {
         db.execute('UPDATE products SET serialized = 1 WHERE id = ?', [product!['id']]);
       }
@@ -469,13 +486,13 @@ extension _StockRoutes on AbdulmalikErpServer {
         cost: cost,
         source: 'customer',
         userId: u.id,
-        seller: {'name': sellerName, 'phone': sellerPhone, 'nationalId': nationalId, 'idPhoto': photo},
+        seller: {'name': sellerName.isEmpty ? null : sellerName, 'phone': sellerPhone, 'nationalId': nationalId.isEmpty ? null : nationalId, 'idPhoto': photo},
       );
-      _moveStock(product!['id'] as String, 1, 'purchase', refType: 'unit', refId: unitId, userId: u.id, note: 'شراء جهاز مستعمل من $sellerName');
-      _cashMove('used_purchase', -cost, method, userId: u.id, refType: 'unit', refId: unitId, note: '${product!['name']} من $sellerName');
+      _moveStock(product!['id'] as String, 1, 'purchase', refType: 'unit', refId: unitId, userId: u.id, note: 'شراء جهاز مستعمل');
+      _cashMove('used_purchase', -cost, method, userId: u.id, refType: 'unit', refId: unitId, note: product!['name'] as String);
       return unitId;
     });
-    _audit(u.id, 'unit.buy_used', 'unit', id, '${product!['name']} • $imei • $sellerName • ${_money(cost)}');
+    _audit(u.id, 'unit.buy_used', 'unit', id, '${product!['name']} • $imei • ${sellerName.isEmpty ? 'شراء مستعمل' : sellerName} • ${_money(cost)}');
     _broadcast('units');
     _broadcast('products');
     _broadcast('cash');

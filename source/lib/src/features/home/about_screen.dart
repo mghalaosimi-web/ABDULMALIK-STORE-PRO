@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/branding_visibility.dart';
+
 /// Presents the project's academic, advisory, engineering, and development team.
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
@@ -111,8 +113,14 @@ class AboutScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const _CompanyProfileCard(),
-            const SizedBox(height: 14),
+            const BrandingVisibilityGate(
+              child: Column(
+                children: [
+                  _CompanyProfileCard(),
+                  SizedBox(height: 14),
+                ],
+              ),
+            ),
             Card(
               clipBehavior: Clip.antiAlias,
               child: Container(

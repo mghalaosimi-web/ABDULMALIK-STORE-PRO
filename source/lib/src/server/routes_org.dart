@@ -285,8 +285,8 @@ extension _OrgRoutes on AbdulmalikErpServer {
           pid = _uuid.v4();
           final now = nowIso();
           db.execute(
-            'INSERT INTO products(id, name, barcode, category, cost_cents, price_cents, qty, low_stock, track_stock, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)',
-            [pid, it['name'], barcode, it['category'], it['costCents'] ?? 0, it['priceCents'] ?? 0, now, now],
+            'INSERT INTO products(id, name, barcode, category, category_id, cost_cents, price_cents, qty, low_stock, track_stock, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)',
+            [pid, it['name'], barcode, it['category'], _ensureCategoryForValue(it['category'] as String?), it['costCents'] ?? 0, it['priceCents'] ?? 0, now, now],
           );
         } else {
           pid = p['id'] as String;

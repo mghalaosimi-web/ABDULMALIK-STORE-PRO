@@ -120,7 +120,7 @@ void main() {
     await expectApiError(owner.post('/api/products/${model['id']}/adjust', {'setQty': 5}), 400);
   });
 
-  test('buying a used phone needs seller ID + photo, pays from the drawer, and shows in IMEI history', () async {
+  test('buying a used phone does not require seller ID or photo, pays from the drawer, and shows in IMEI history', () async {
     final photo = (await cashier.post('/api/files', {'data': _jpeg, 'kind': 'national_id'}))['id'] as String;
     await expectApiError(cashier.post('/api/files', {'data': base64.encode([1, 2, 3, 4])}), 400);
 
@@ -137,18 +137,36 @@ void main() {
       'priceCents': 1100000,
     };
     await expectApiError(cashier.post('/api/units/buy-used', {...body, 'sellerNationalId': '123'}), 400);
-    await expectApiError(cashier.post('/api/units/buy-used', {...body, 'idPhotoId': null}), 400);
-
-    final res = await cashier.post('/api/units/buy-used', body);
+    final res = await cashier.post('/api/units/buy-used', {
+      ...body,
+      'sellerName': '',
+      'sellerPhone': '',
+      'sellerNationalId': '',
+      'idPhotoId': null,
+    });
     expect(res['unit']['condition'], 'used');
-    expect(res['unit']['sellerName'], 'محمد علي');
+    expect(res['unit']['sellerName'], isNull);
     expect(res['unit']['priceCents'], 1100000);
 
+    final second = await cashier.post('/api/units/buy-used', {
+      ...body,
+      'imei': '353918105555568',
+      'sellerName': '',
+      'sellerPhone': '',
+      'sellerNationalId': '',
+      'idPhotoId': null,
+    });
+    expect(second['unit']['productId'], res['unit']['productId']);
+    final catalog = await cashier.get('/api/products/categories');
+    expect((catalog['tree'] as List).any((c) => c['id'] == 'system-phones-root'), isTrue);
+    final productList = await cashier.get('/api/products', query: {'q': 'iPhone 12'});
+    expect((productList['products'] as List).single['category'], 'الهواتف المحمولة');
+
     final cash = await cashier.get('/api/cash/current');
-    expect(cash['session']['byType']['used_purchase'], -900000);
+    expect(cash['session']['byType']['used_purchase'], -1800000);
 
     final history = await cashier.get('/api/imei/353918105555550');
-    expect((history['units'] as List).single['sellerNationalId'], '29001011234567');
+    expect((history['units'] as List).single['sellerNationalId'], isNull);
 
     // الصورة ممكن تتفتح تاني
     final img = await cashier.send('GET', '/api/files/$photo').catchError((_) => <String, dynamic>{});

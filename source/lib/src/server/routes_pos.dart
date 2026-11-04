@@ -30,6 +30,7 @@ extension _PosRoutes on AbdulmalikErpServer {
     r.get('/api/products', _authed(_listProducts));
     r.get('/api/products/lookup', _authed(_lookupProduct));
     r.get('/api/products/categories', _authed(_productCategories));
+    r.post('/api/products/categories', _authed(_createProductCategory, only: _cashStaff));
     r.post('/api/products', _authed(_createProduct, only: _cashStaff));
     r.post('/api/products/barcode', _authed((req, u) => {'barcode': _newBarcode()}, only: _cashStaff));
     r.post('/api/products/import', _authed(_importProducts, only: {'owner'}));
@@ -82,8 +83,14 @@ extension _PosRoutes on AbdulmalikErpServer {
       params.addAll(['%$q%', q, '%$q%']);
     }
     if ((qp['category'] ?? '').isNotEmpty) {
-      where.add('category = ?');
-      params.add(qp['category']);
+      final category = qp['category']!;
+      if (category == 'الهواتف المحمولة') {
+        where.add('(category = ? OR category LIKE ?)');
+        params.addAll([category, '$category::%']);
+      } else {
+        where.add('category = ?');
+        params.add(category);
+      }
     }
     // افصل الأكسسوارات عن المخزون العام دون تغيير بنية قاعدة البيانات أو كسر الأصناف القديمة.
     if (qp['section'] == 'accessories') {
@@ -136,13 +143,67 @@ extension _PosRoutes on AbdulmalikErpServer {
   }
 
   Object? _productCategories(Request req, AuthUser u) {
-    // اعرض التصنيفات المستخدمة حديثاً أولاً، حتى يظهر التصنيف الذي أُضيف للتو في مقدمة الاقتراحات.
     final rows = db.select(
-      "SELECT category, MAX(updated_at) AS latest FROM products "
-      "WHERE category IS NOT NULL AND category <> '' AND active = 1 "
-      "GROUP BY category ORDER BY latest DESC, category COLLATE NOCASE",
+      'SELECT id, name, parent_id AS parentId FROM product_categories ORDER BY COALESCE(parent_id, id), normalized_name',
     );
-    return {'categories': rows.map((r) => r['category']).toList()};
+    // الحقل النصي القديم يبقى متاحاً للعملاء الحاليين.
+    final legacy = db.select(
+      "SELECT category, MAX(updated_at) AS latest FROM products WHERE category IS NOT NULL AND category <> '' AND active = 1 GROUP BY category ORDER BY latest DESC, category COLLATE NOCASE",
+    );
+    return {'categories': legacy.map((r) => r['category']).toList(), 'tree': rows};
+  }
+
+  Future<Object?> _createProductCategory(Request req, AuthUser u) async {
+    final body = await _body(req);
+    final name = _requiredText(body, 'name', 'اسم التصنيف').trim();
+    if (name.length > 80 || name.contains('::')) throw ApiError(400, 'اسم التصنيف غير صالح');
+    final parentId = _optionalText(body, 'parentId');
+    if (parentId != null && db.selectOne('SELECT id FROM product_categories WHERE id = ?', [parentId]) == null) {
+      throw ApiError(404, 'التصنيف الرئيسي غير موجود');
+    }
+    final normalized = name.toLowerCase();
+    final duplicate = db.selectOne(
+      "SELECT id FROM product_categories WHERE COALESCE(parent_id, '') = COALESCE(?, '') AND normalized_name = ?",
+      [parentId, normalized],
+    );
+    if (duplicate != null) throw ApiError(409, 'هذا التصنيف موجود بالفعل في المستوى نفسه');
+    final id = _uuid.v4();
+    db.execute('INSERT INTO product_categories(id, name, normalized_name, parent_id, created_at) VALUES(?, ?, ?, ?, ?)',
+      [id, name, normalized, parentId, nowIso()]);
+    return {'category': {'id': id, 'name': name, 'parentId': parentId}};
+  }
+
+
+  void _assertUniqueProductName(String name, String? categoryId, {String? exceptId}) {
+    if (categoryId == null) return;
+    final duplicate = db.selectOne(
+      'SELECT id FROM products WHERE category_id = ? AND lower(trim(name)) = lower(trim(?)) AND (? IS NULL OR id <> ?) LIMIT 1',
+      [categoryId, name, exceptId, exceptId],
+    );
+    if (duplicate != null) throw ApiError(409, 'يوجد صنف بالاسم نفسه داخل هذا التصنيف؛ غيّر الاسم أو اختر التصنيف الصحيح');
+  }
+
+  String? _ensureCategoryForValue(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    final parts = value.split('::').map((part) => part.trim()).toList();
+    if (parts.any((part) => part.isEmpty || part.length > 80)) throw ApiError(400, 'مسار التصنيف غير صالح');
+    String? parentId;
+    for (final name in parts) {
+      final normalized = name.toLowerCase();
+      final found = db.selectOne(
+        "SELECT id FROM product_categories WHERE COALESCE(parent_id, '') = COALESCE(?, '') AND normalized_name = ?",
+        [parentId, normalized],
+      );
+      if (found != null) {
+        parentId = found['id'] as String;
+        continue;
+      }
+      final id = _uuid.v4();
+      db.execute('INSERT INTO product_categories(id, name, normalized_name, parent_id, created_at) VALUES(?, ?, ?, ?, ?)',
+        [id, name, normalized, parentId, nowIso()]);
+      parentId = id;
+    }
+    return parentId;
   }
 
   String? _validBarcode(Object? raw, {String? exceptId}) {
@@ -173,14 +234,17 @@ extension _PosRoutes on AbdulmalikErpServer {
     final id = _uuid.v4();
     final now = nowIso();
     final serialized = body['serialized'] == true;
+    final category = _optionalText(body, 'category');
+    final categoryId = _ensureCategoryForValue(category);
+    _assertUniqueProductName(_requiredText(body, 'name', 'اسم الصنف'), categoryId);
     // الأجهزة بالـ IMEI كميتها بتيجي من الأجهزة نفسها، مش رقم بيتكتب
     final qty = serialized ? 0 : (body['qty'] is int ? body['qty'] as int : 0);
     db.transaction(() {
       db.execute(
-        'INSERT INTO products(id, name, barcode, category, cost_cents, price_cents, qty, low_stock, track_stock, serialized, warranty_months, notes, image_file_id, created_at, updated_at) '
-        'VALUES(?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO products(id, name, barcode, category, category_id, cost_cents, price_cents, qty, low_stock, track_stock, serialized, warranty_months, notes, image_file_id, created_at, updated_at) '
+        'VALUES(?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
-          id, _requiredText(body, 'name', 'اسم الصنف'), _validBarcode(body['barcode']), _optionalText(body, 'category'),
+          id, _requiredText(body, 'name', 'اسم الصنف'), _validBarcode(body['barcode']), category, categoryId,
           body['costCents'] == null ? 0 : _cents(body['costCents'], 'سعر الشراء'),
           body['priceCents'] == null ? 0 : _cents(body['priceCents'], 'سعر البيع'),
           body['lowStock'] is int ? (body['lowStock'] as int).clamp(0, 100000) : 0,
@@ -207,7 +271,18 @@ extension _PosRoutes on AbdulmalikErpServer {
     final sets = <String, Object?>{};
     if (body.containsKey('name')) sets['name'] = _requiredText(body, 'name', 'اسم الصنف');
     if (body.containsKey('barcode')) sets['barcode'] = _validBarcode(body['barcode'], exceptId: id);
-    if (body.containsKey('category')) sets['category'] = _optionalText(body, 'category');
+    if (body.containsKey('category')) {
+      final category = _optionalText(body, 'category');
+      sets['category'] = category;
+      sets['category_id'] = _ensureCategoryForValue(category);
+    }
+    if (sets.containsKey('name') || sets.containsKey('category_id')) {
+      final nextName = (sets['name'] ?? p['name']) as String;
+      final nextCategoryId = sets.containsKey('category_id')
+          ? sets['category_id'] as String?
+          : p['category_id'] as String?;
+      _assertUniqueProductName(nextName, nextCategoryId, exceptId: id);
+    }
     if (body.containsKey('costCents')) sets['cost_cents'] = _cents(body['costCents'], 'سعر الشراء');
     if (body.containsKey('priceCents')) sets['price_cents'] = _cents(body['priceCents'], 'سعر البيع');
     if (body.containsKey('lowStock')) sets['low_stock'] = (body['lowStock'] as int? ?? 0).clamp(0, 100000);
@@ -326,21 +401,31 @@ extension _PosRoutes on AbdulmalikErpServer {
             ? db.selectOne('SELECT * FROM products WHERE barcode = ?', [barcode])
             : db.selectOne('SELECT * FROM products WHERE name = ? AND barcode IS NULL', [name]);
         final qty = r['qty'] is int ? r['qty'] as int : null;
+        final category = (r['category'] as String?)?.trim();
+        final categoryId = _ensureCategoryForValue(category);
         if (existing == null) {
+          final duplicate = categoryId == null ? null : db.selectOne(
+            'SELECT id FROM products WHERE category_id = ? AND lower(trim(name)) = lower(trim(?)) LIMIT 1',
+            [categoryId, name],
+          );
+          if (duplicate != null) {
+            errors.add('صف ${i + 1}: يوجد صنف بالاسم نفسه داخل التصنيف المحدد');
+            continue;
+          }
           final id = _uuid.v4();
           db.execute(
-            'INSERT INTO products(id, name, barcode, category, cost_cents, price_cents, qty, low_stock, track_stock, created_at, updated_at) '
-            'VALUES(?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)',
-            [id, name, barcode.isEmpty ? null : barcode, (r['category'] as String?)?.trim(), cents(r['costCents']) ?? 0, cents(r['priceCents']) ?? 0,
+            'INSERT INTO products(id, name, barcode, category, category_id, cost_cents, price_cents, qty, low_stock, track_stock, created_at, updated_at) '
+            'VALUES(?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)',
+            [id, name, barcode.isEmpty ? null : barcode, category, categoryId, cents(r['costCents']) ?? 0, cents(r['priceCents']) ?? 0,
              r['lowStock'] is int ? r['lowStock'] : 0, now, now],
           );
           if (qty != null && qty != 0) _moveStock(id, qty, 'import', userId: u.id, note: 'استيراد');
           created++;
         } else {
           db.execute(
-            'UPDATE products SET name = ?, category = COALESCE(?, category), cost_cents = COALESCE(?, cost_cents), '
+            'UPDATE products SET name = ?, category = COALESCE(?, category), category_id = COALESCE(?, category_id), cost_cents = COALESCE(?, cost_cents), '
             'price_cents = COALESCE(?, price_cents), active = 1, updated_at = ? WHERE id = ?',
-            [name, (r['category'] as String?)?.trim(), cents(r['costCents']), cents(r['priceCents']), now, existing['id']],
+            [name, category, categoryId, cents(r['costCents']), cents(r['priceCents']), now, existing['id']],
           );
           if (updateQty && qty != null && qty != existing['qty']) {
             _moveStock(existing['id'] as String, qty - (existing['qty'] as int), 'import', userId: u.id, note: 'استيراد');

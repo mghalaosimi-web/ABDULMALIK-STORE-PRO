@@ -77,6 +77,47 @@ void main() {
     expect(r['stock']['valueCents'], 8 * 3000 + 60000);
   });
 
+  test('inventory report separates purchase, net sales, returns and nested category stock', () async {
+    final product = (await api.post('/api/products', {
+      'name': 'Galaxy A55 128GB أسود',
+      'category': 'هواتف::Samsung::Galaxy A55',
+      'qty': 5,
+      'costCents': 10000,
+      'priceCents': 15000,
+    }))['product'] as Map;
+    final productId = product['id'] as String;
+
+    await api.post('/api/products/$productId/adjust', {
+      'qtyChange': 4,
+      'reason': 'purchase',
+    });
+
+    final sale = await api.post('/api/sales', {
+      'items': [{'productId': productId, 'qty': 2}],
+      'payments': [{'method': 'cash', 'amountCents': 30000}],
+    });
+    final saleId = sale['sale']['id'] as String;
+    final saleItemId = (sale['items'] as List).single['id'] as String;
+    await api.post('/api/sales/$saleId/return', {
+      'items': [{'saleItemId': saleItemId, 'qty': 1}],
+    });
+
+    final report = await api.get('/api/reports/inventory');
+    final rows = (report['items'] as List).cast<Map<String, dynamic>>();
+    final row = rows.singleWhere((item) => item['id'] == productId);
+    expect(row['categoryPath'], 'هواتف / Samsung / Galaxy A55');
+    expect(row['incomingQty'], 4);
+    expect(row['soldQty'], 1);
+    expect(row['returnedQty'], 1);
+    expect(row['currentQty'], 8);
+
+    final totals = report['totals'] as Map;
+    expect(totals['incomingQty'], 4);
+    expect(totals['soldQty'], 1);
+    expect(totals['returnedQty'], 1);
+    expect(totals['currentQty'], 8);
+  });
+
   test('reports are owner-only', () async {
     await api.post('/api/users', {'name': 'سارة', 'username': 'sara', 'password': 'sara1234', 'role': 'reception'});
     final rec = ApiClient(api.baseUrl);
@@ -84,6 +125,12 @@ void main() {
     try {
       await rec.get('/api/reports/summary');
       fail('should be forbidden');
+    } on ApiException catch (e) {
+      expect(e.status, 403);
+    }
+    try {
+      await rec.get('/api/reports/inventory');
+      fail('inventory report should be forbidden');
     } on ApiException catch (e) {
       expect(e.status, 403);
     }
